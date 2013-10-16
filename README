@@ -1,0 +1,5 @@
+This is a fork of the LZJB implementation from FreeBSD, which is
+itself a fork of Sun/Oracle's OpenSolaris implementation.  This
+version contains a few minor enhancements aimed primarily at making
+the code easy to embed in other projects, as well as some minor
+performance hints.

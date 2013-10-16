@@ -24,50 +24,82 @@
  */
 
 /*
- * We keep our own copy of this algorithm for 3 main reasons:
- *	1. If we didn't, anyone modifying common/os/compress.c would
- *         directly break our on disk format
- *	2. Our version of lzjb does not have a number of checks that the
- *         common/os version needs and uses
- *	3. We initialize the lempel to ensure deterministic results,
- *	   so that identical blocks can always be deduplicated.
- * In particular, we are adding the "feature" that compress() can
- * take a destination buffer size and returns the compressed length, or the
- * source length if compression would overflow the destination buffer.
+ * This file is derived from the copy distributed with FreeBSD
+ * (http://svnweb.freebsd.org/base/head/sys/cddl/contrib/opensolaris/uts/common/fs/zfs/lzjb.c,
+ * last synced with revision 256132).  Some modifications have been
+ * made:
+ *
+ * - Functionality
+ *   - Added header file
+ *   - Added LZJB_MAX_COMPRESSED_SIZE macro
+ *   - lzjb_decompress will now attempt to consume all input instead
+ *     of fill all output.  Furthermore, instead of returning 0 on
+ *     success and -1 on failure, it will now return 0 on failure and
+ *     the number of bytes successfully decompressed on success.
+ * - Portability
+ *   - Changed included headers
+ *   - s/uchar_t/uint8_t/
+ *   - #define NBBY 8
+ * - Performance
+ *   - Add const keywords
+ *   - Add restrict keyword to some arguments when using C99 or later
+ *   - Add lots of LZJB_LIKELY/UNLIKELY information (based on frequency
+ *     when running against the Canterbury Corpus).
+ *
+ * These changes are largely to help facilitate integration into the
+ * Squash compression abstraction library
+ * (http://quixdb.github.io/squash/), however, they should be useful
+ * for other software as well.
  */
 
-#include <sys/zfs_context.h>
-#include <sys/types.h>
-#include <sys/param.h>
+#include "lzjb.h"
 
 #define	MATCH_BITS	6
 #define	MATCH_MIN	3
 #define	MATCH_MAX	((1 << MATCH_BITS) + (MATCH_MIN - 1))
 #define	OFFSET_MASK	((1 << (16 - MATCH_BITS)) - 1)
 #define	LEMPEL_SIZE	1024
+#ifndef NBBY
+#define NBBY 8
+#endif
 
-/*ARGSUSED*/
+#ifdef __GNUC__
+#  define LZJB_LIKELY(expr) __builtin_expect(!!(expr), 1)
+#  define LZJB_UNLIKELY(expr) __builtin_expect(!!(expr), 0)
+#else
+#  define LZJB_LIKELY(expr) (expr)
+#  define LZJB_UNLIKELY(expr) (expr)
+#endif
+
+#ifndef LZJB_RESTRICT
+	#if __STDC_VERSION__ >= 199901L
+		#define LZJB_RESTRICT restrict
+	#else
+		#define LZJB_RESTRICT
+	#endif
+#endif
+
 size_t
-lzjb_compress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
+lzjb_compress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size_t s_len, size_t d_len)
 {
-	uchar_t *src = s_start;
-	uchar_t *dst = d_start;
-	uchar_t *cpy;
-	uchar_t *copymap = NULL;
+	const uint8_t* s_start = src;
+	const uint8_t* d_start = dst;
+	const uint8_t *cpy;
+	uint8_t *copymap = NULL;
 	int copymask = 1 << (NBBY - 1);
 	int mlen, offset, hash;
 	uint16_t *hp;
 	uint16_t lempel[LEMPEL_SIZE] = { 0 };
 
-	while (src < (uchar_t *)s_start + s_len) {
+	while (LZJB_LIKELY(src < s_start + s_len)) {
 		if ((copymask <<= 1) == (1 << NBBY)) {
-			if (dst >= (uchar_t *)d_start + d_len - 1 - 2 * NBBY)
+			if (dst >= d_start + d_len - 1 - 2 * NBBY)
 				return (s_len);
 			copymask = 1;
 			copymap = dst;
 			*dst++ = 0;
 		}
-		if (src > (uchar_t *)s_start + s_len - MATCH_MAX) {
+		if (LZJB_UNLIKELY(src > s_start + s_len - MATCH_MAX)) {
 			*dst++ = *src++;
 			continue;
 		}
@@ -78,35 +110,37 @@ lzjb_compress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
 		offset = (intptr_t)(src - *hp) & OFFSET_MASK;
 		*hp = (uint16_t)(uintptr_t)src;
 		cpy = src - offset;
-		if (cpy >= (uchar_t *)s_start && cpy != src &&
-		    src[0] == cpy[0] && src[1] == cpy[1] && src[2] == cpy[2]) {
+		if (LZJB_LIKELY(cpy >= s_start) && /* Is there a situation where this isn't true? */
+				(*((uint16_t*) src) == *((uint16_t*) cpy)) &&
+				LZJB_LIKELY(src[2] == cpy[2]) &&
+				LZJB_LIKELY(cpy != src)) {
 			*copymap |= copymask;
-			for (mlen = MATCH_MIN; mlen < MATCH_MAX; mlen++)
+			for (mlen = MATCH_MIN; LZJB_LIKELY(mlen < MATCH_MAX); mlen++)
 				if (src[mlen] != cpy[mlen])
 					break;
 			*dst++ = ((mlen - MATCH_MIN) << (NBBY - MATCH_BITS)) |
 			    (offset >> NBBY);
-			*dst++ = (uchar_t)offset;
+			*dst++ = (uint8_t)offset;
 			src += mlen;
 		} else {
 			*dst++ = *src++;
 		}
 	}
-	return (dst - (uchar_t *)d_start);
+	return (dst - d_start);
 }
 
-/*ARGSUSED*/
-int
-lzjb_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
+size_t
+lzjb_decompress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size_t s_len, size_t d_len)
 {
-	uchar_t *src = s_start;
-	uchar_t *dst = d_start;
-	uchar_t *d_end = (uchar_t *)d_start + d_len;
-	uchar_t *cpy;
-	uchar_t copymap = 0;
+	const uint8_t* s_start = src;
+	const uint8_t* d_start = dst;
+	const uint8_t *d_end = (uint8_t *)d_start + d_len;
+	const uint8_t *s_end = (uint8_t *)s_start + s_len;
+	uint8_t *cpy;
+	uint8_t copymap = 0;
 	int copymask = 1 << (NBBY - 1);
 
-	while (dst < d_end) {
+	while (LZJB_LIKELY(src < s_end)) {
 		if ((copymask <<= 1) == (1 << NBBY)) {
 			copymask = 1;
 			copymap = *src++;
@@ -115,9 +149,9 @@ lzjb_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
 			int mlen = (src[0] >> (NBBY - MATCH_BITS)) + MATCH_MIN;
 			int offset = ((src[0] << NBBY) | src[1]) & OFFSET_MASK;
 			src += 2;
-			if ((cpy = dst - offset) < (uchar_t *)d_start)
-				return (-1);
-			if (mlen > (d_end - dst))
+			if (LZJB_UNLIKELY((cpy = dst - offset) < (uint8_t *)d_start)) /* Is this ever true? */
+				return (0);
+			if (LZJB_UNLIKELY(mlen > (d_end - dst)))
 				mlen = d_end - dst;
 			while (--mlen >= 0)
 				*dst++ = *cpy++;
@@ -125,5 +159,5 @@ lzjb_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
 			*dst++ = *src++;
 		}
 	}
-	return (0);
+	return (size_t) (dst - d_start);
 }
