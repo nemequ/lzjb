@@ -23,7 +23,7 @@
 #define _LZJB_H_
 
 #ifndef LZJB_RESTRICT
-	#if __STDC_VERSION__ >= 199901L
+	#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 		#define LZJB_RESTRICT restrict
 	#else
 		#define LZJB_RESTRICT
