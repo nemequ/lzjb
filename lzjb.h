@@ -42,7 +42,13 @@
 	 (((s_len % 8) != 0) ? 1 : 0) +				\
 	 (2 * 8))
 
+typedef enum {
+	LZJB_OK,
+	LZJB_BAD_DATA,
+	LZJB_WOULD_OVERFLOW
+} LZJBResult;
+
 size_t lzjb_compress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size_t s_len, size_t d_len);
-size_t lzjb_decompress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size_t s_len, size_t d_len);
+LZJBResult lzjb_decompress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size_t s_len, size_t* d_len);
 
 #endif /* _LZJB_H_ */

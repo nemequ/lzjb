@@ -129,18 +129,23 @@ lzjb_compress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size
 	return (dst - d_start);
 }
 
-size_t
-lzjb_decompress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size_t s_len, size_t d_len)
+#include <stdio.h>
+#include <assert.h>
+LZJBResult
+lzjb_decompress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size_t s_len, size_t* d_len)
 {
 	const uint8_t* s_start = src;
 	const uint8_t* d_start = dst;
-	const uint8_t *d_end = (uint8_t *)d_start + d_len;
+	const uint8_t *d_end = (uint8_t *)d_start + *d_len;
 	const uint8_t *s_end = (uint8_t *)s_start + s_len;
 	uint8_t *cpy;
 	uint8_t copymap = 0;
 	int copymask = 1 << (NBBY - 1);
 
 	while (LZJB_LIKELY(src < s_end)) {
+		if (dst >= d_end)
+			return LZJB_WOULD_OVERFLOW;
+
 		if ((copymask <<= 1) == (1 << NBBY)) {
 			copymask = 1;
 			copymap = *src++;
@@ -149,15 +154,17 @@ lzjb_decompress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, si
 			int mlen = (src[0] >> (NBBY - MATCH_BITS)) + MATCH_MIN;
 			int offset = ((src[0] << NBBY) | src[1]) & OFFSET_MASK;
 			src += 2;
-			if (LZJB_UNLIKELY((cpy = dst - offset) < (uint8_t *)d_start)) /* Is this ever true? */
-				return (0);
+			if (LZJB_UNLIKELY((cpy = dst - offset) < (uint8_t *)d_start)) {
+				return LZJB_BAD_DATA;
+			}
 			if (LZJB_UNLIKELY(mlen > (d_end - dst)))
-				mlen = d_end - dst;
+				return LZJB_WOULD_OVERFLOW;
 			while (--mlen >= 0)
 				*dst++ = *cpy++;
 		} else {
 			*dst++ = *src++;
 		}
 	}
-	return (size_t) (dst - d_start);
+	*d_len = (size_t) (dst - d_start);
+	return LZJB_OK;
 }
