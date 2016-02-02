@@ -54,6 +54,9 @@
 
 #include "lzjb.h"
 
+/* For memcmp */
+#include <string.h>
+
 #define	MATCH_BITS	6
 #define	MATCH_MIN	3
 #define	MATCH_MAX	((1 << MATCH_BITS) + (MATCH_MIN - 1))
@@ -111,7 +114,7 @@ lzjb_compress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size
 		*hp = (uint16_t)(uintptr_t)src;
 		cpy = src - offset;
 		if (LZJB_LIKELY(cpy >= s_start) && /* Is there a situation where this isn't true? */
-				(*((uint16_t*) src) == *((uint16_t*) cpy)) &&
+				memcmp(src, cpy, sizeof(uint16_t)) == 0 &&
 				LZJB_LIKELY(src[2] == cpy[2]) &&
 				LZJB_LIKELY(cpy != src)) {
 			*copymap |= copymask;
