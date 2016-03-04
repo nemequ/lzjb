@@ -97,7 +97,7 @@ lzjb_compress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size
 	while (LZJB_LIKELY(src < s_start + s_len)) {
 		if ((copymask <<= 1) == (1 << NBBY)) {
 			if (dst >= d_start + d_len - 1 - 2 * NBBY)
-				return (s_len);
+				return 0;
 			copymask = 1;
 			copymap = dst;
 			*dst++ = 0;
