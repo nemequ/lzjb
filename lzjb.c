@@ -132,8 +132,6 @@ lzjb_compress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size
 	return (dst - d_start);
 }
 
-#include <stdio.h>
-#include <assert.h>
 LZJBResult
 lzjb_decompress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, size_t s_len, size_t* d_len)
 {
@@ -154,6 +152,8 @@ lzjb_decompress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, si
 			copymap = *src++;
 		}
 		if (copymap & copymask) {
+			if(LZJB_UNLIKELY(&src[1] >= s_end))
+				return LZJB_WOULD_OVERFLOW;
 			int mlen = (src[0] >> (NBBY - MATCH_BITS)) + MATCH_MIN;
 			int offset = ((src[0] << NBBY) | src[1]) & OFFSET_MASK;
 			src += 2;
@@ -162,9 +162,12 @@ lzjb_decompress(const uint8_t* LZJB_RESTRICT src, uint8_t* LZJB_RESTRICT dst, si
 			}
 			if (LZJB_UNLIKELY(mlen > (d_end - dst)))
 				return LZJB_WOULD_OVERFLOW;
-			while (--mlen >= 0)
+			while (--mlen >= 0) {
 				*dst++ = *cpy++;
+			}
 		} else {
+			if (LZJB_UNLIKELY(src >= s_end))
+				return LZJB_WOULD_OVERFLOW;
 			*dst++ = *src++;
 		}
 	}
